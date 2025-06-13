@@ -14,21 +14,44 @@ from tau_bench.envs import get_env
 from tau_bench.agents.base import Agent
 from tau_bench.types import EnvRunResult, RunConfig
 from litellm import provider_list
+import litellm # Make sure litellm is imported
 from tau_bench.envs.user import UserStrategy
 
 
 def run(config: RunConfig) -> List[EnvRunResult]:
     assert config.env in ["retail", "airline"], "Only retail and airline envs are supported"
-    assert config.model_provider in provider_list, "Invalid model provider"
+    assert config.model_provider in provider_list or config.model_provider == "company", "Invalid model provider"
     effective_user_model_provider = config.user_model_provider or config.model_provider
-    assert effective_user_model_provider in provider_list, f"Invalid user model provider: {effective_user_model_provider}"
+    assert effective_user_model_provider in provider_list or effective_user_model_provider == "company", f"Invalid user model provider: {effective_user_model_provider}"
     assert config.agent_strategy in ["tool-calling", "act", "react", "few-shot"], "Invalid agent strategy"
     assert config.task_split in ["train", "test", "dev"], "Invalid task split"
     assert config.user_strategy in [item.value for item in UserStrategy], "Invalid user strategy"
 
+    # These will store the model names to be used by agents/env
+    effective_agent_model = config.model
+    effective_user_model = config.user_model
+    # Provider for agent and user, after considering fallback for user_model_provider
+    agent_provider = config.model_provider
+    user_provider = effective_user_model_provider # This was already defined: config.user_model_provider or config.model_provider
+
+    if agent_provider == "company" or user_provider == "company":
+        company_api_key = os.getenv("COMPANY_API_KEY")
+        if not company_api_key:
+            raise ValueError("COMPANY_API_KEY env var must be set for 'company' provider")
+        company_api_base = "https://oneai.17usoft.com/v1"
+
+        # If either provider is 'company', set OPENAI env vars to point to company's endpoint
+        # This makes 'openai' provider effectively become the 'company' provider for this run
+        os.environ["OPENAI_API_KEY"] = company_api_key
+        os.environ["OPENAI_API_BASE"] = company_api_base
+
+        # No model name prefixing is needed now, as we are reconfiguring the 'openai' provider
+        # The agent/user_env will use provider 'openai' which now points to company's URL
+
     random.seed(config.seed)
     time_str = datetime.now().strftime("%m%d%H%M%S")
-    ckpt_path = f"{config.log_dir}/{config.agent_strategy}-{config.model.split('/')[-1]}-{config.temperature}_range_{config.start_index}-{config.end_index}_user-{config.user_model}-{config.user_strategy}_{time_str}.json"
+    # ckpt_path uses original model names from config, as effective_model names are no longer prefixed
+    ckpt_path = f"{config.log_dir}/{config.agent_strategy}-{config.model.split('/')[-1]}-{config.temperature}_range_{config.start_index}-{config.end_index}_user-{config.user_model.split('/')[-1]}-{config.user_strategy}_{time_str}.json"
     if not os.path.exists(config.log_dir):
         os.makedirs(config.log_dir)
 
@@ -36,13 +59,14 @@ def run(config: RunConfig) -> List[EnvRunResult]:
     env = get_env(
         config.env,
         user_strategy=config.user_strategy,
-        user_model=config.user_model,
+        user_model=effective_user_model, # Use effective_user_model
         user_provider=effective_user_model_provider,
         task_split=config.task_split,
     )
     agent = agent_factory(
         tools_info=env.tools_info,
         wiki=env.wiki,
+        agent_model_str=effective_agent_model, # Still use effective_agent_model (which is config.model now)
         config=config,
     )
     end_index = (
@@ -68,7 +92,7 @@ def run(config: RunConfig) -> List[EnvRunResult]:
             isolated_env = get_env(
                 config.env,
                 user_strategy=config.user_strategy,
-                user_model=config.user_model,
+                user_model=effective_user_model, # Use effective_user_model
                 task_split=config.task_split,
                 user_provider=effective_user_model_provider,
                 task_index=idx,
@@ -123,7 +147,7 @@ def run(config: RunConfig) -> List[EnvRunResult]:
 
 
 def agent_factory(
-    tools_info: List[Dict[str, Any]], wiki, config: RunConfig
+    tools_info: List[Dict[str, Any]], wiki, agent_model_str: str, config: RunConfig
 ) -> Agent:
     if config.agent_strategy == "tool-calling":
         # native tool calling
@@ -132,11 +156,9 @@ def agent_factory(
         return ToolCallingAgent(
             tools_info=tools_info,
             wiki=wiki,
-            model=config.model,
+            model=agent_model_str, # Use agent_model_str
             provider=config.model_provider,
             temperature=config.temperature,
-            api_base=config.api_base,
-            api_key=config.api_key,
         )
     elif config.agent_strategy == "act":
         # `act` from https://arxiv.org/abs/2210.03629
@@ -145,12 +167,10 @@ def agent_factory(
         return ChatReActAgent(
             tools_info=tools_info,
             wiki=wiki,
-            model=config.model,
+            model=agent_model_str, # Use agent_model_str
             provider=config.model_provider,
             use_reasoning=False,
             temperature=config.temperature,
-            api_base=config.api_base,
-            api_key=config.api_key,
         )
     elif config.agent_strategy == "react":
         # `react` from https://arxiv.org/abs/2210.03629
@@ -159,12 +179,10 @@ def agent_factory(
         return ChatReActAgent(
             tools_info=tools_info,
             wiki=wiki,
-            model=config.model,
+            model=agent_model_str, # Use agent_model_str
             provider=config.model_provider,
             use_reasoning=True,
             temperature=config.temperature,
-            api_base=config.api_base,
-            api_key=config.api_key,
         )
     elif config.agent_strategy == "few-shot":
         from tau_bench.agents.few_shot_agent import FewShotToolCallingAgent
@@ -175,12 +193,10 @@ def agent_factory(
         return FewShotToolCallingAgent(
             tools_info=tools_info,
             wiki=wiki,
-            model=config.model,
+            model=agent_model_str, # Use agent_model_str
             provider=config.model_provider,
             few_shot_displays=few_shot_displays,
             temperature=config.temperature,
-            api_base=config.api_base,
-            api_key=config.api_key,
         )
     else:
         raise ValueError(f"Unknown agent strategy: {config.agent_strategy}")

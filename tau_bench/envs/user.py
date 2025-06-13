@@ -44,8 +44,9 @@ class LLMUserSimulationEnv(BaseUserSimulationEnv):
         self.reset()
 
     def generate_next_message(self, messages: List[Dict[str, Any]]) -> str:
+        llm_provider_arg = "openai" if self.provider == "company" else self.provider
         res = completion(
-            model=self.model, custom_llm_provider=self.provider, messages=messages
+            model=self.model, custom_llm_provider=llm_provider_arg, messages=messages
         )
         message = res.choices[0].message
         self.messages.append(message.model_dump())
@@ -164,8 +165,9 @@ class VerifyUserSimulationEnv(LLMUserSimulationEnv):
         attempts = 0
         cur_message = None
         while attempts < self.max_attempts:
+            llm_provider_arg = "openai" if self.provider == "company" else self.provider
             res = completion(
-                model=self.model, custom_llm_provider=self.provider, messages=messages
+                model=self.model, custom_llm_provider=llm_provider_arg, messages=messages
             )
             cur_message = res.choices[0].message
             self.total_cost = res._hidden_params["response_cost"]
@@ -224,9 +226,10 @@ Your answer will be parsed, so do not include any other text than the classifica
 -----
 
 Classification:"""
+    llm_provider_arg = "openai" if provider == "company" else provider
     res = completion(
         model=model,
-        custom_llm_provider=provider,
+        custom_llm_provider=llm_provider_arg,
         messages=[{"role": "user", "content": prompt}],
     )
     return "true" in res.choices[0].message.content.lower()
@@ -258,9 +261,10 @@ Reflection:
 
 Response:
 <the response (this will be parsed and sent to the agent)>"""
+    llm_provider_arg = None if provider == "company" else provider
     res = completion(
         model=model,
-        custom_llm_provider=provider,
+        custom_llm_provider=llm_provider_arg,
         messages=[{"role": "user", "content": prompt}],
     )
     _, response = res.choices[0].message.content.split("Response:")

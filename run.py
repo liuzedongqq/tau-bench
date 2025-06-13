@@ -21,7 +21,7 @@ def parse_args() -> RunConfig:
     parser.add_argument(
         "--model-provider",
         type=str,
-        choices=provider_list,
+        choices=provider_list + ["company"],
         help="The model provider for the agent",
     )
     parser.add_argument(
@@ -33,7 +33,7 @@ def parse_args() -> RunConfig:
     parser.add_argument(
         "--user-model-provider",
         type=str,
-        choices=provider_list,
+        choices=provider_list + ["company"],
         help="The model provider for the user simulator",
     )
     parser.add_argument(
